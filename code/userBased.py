@@ -1,7 +1,8 @@
 import numpy as np
 import scipy.stats
 import scipy.spatial
-from sklearn.cross_validation import KFold
+#from sklearn.cross_validation import KFold
+from sklearn.model_selection import KFold#train_test_split
 import random
 from sklearn.metrics import mean_squared_error
 from math import sqrt
@@ -28,6 +29,7 @@ def similarity_user(data):
 	print "Hello User"
 	#f_i_d = open("sim_user_based.txt","w")
 	user_similarity_cosine = np.zeros((users,users))
+	user_similarity_cosine_pure = np.zeros((users, users))
 	user_similarity_jaccard = np.zeros((users,users))
 	user_similarity_pearson = np.zeros((users,users))
 	for user1 in range(users):
@@ -35,6 +37,12 @@ def similarity_user(data):
 		for user2 in range(users):
 			if np.count_nonzero(data[user1]) and np.count_nonzero(data[user2]):
 				user_similarity_cosine[user1][user2] = 1-scipy.spatial.distance.cosine(data[user1],data[user2])
+
+				common_read_books = np.logical_and(user1, user2).transpose()
+				mod = (np.linalg.norm(np.multiply(user1, common_read_books)) * np.linalg.norm(
+					np.multiply(user2, common_read_books)))
+				if mod != 0:
+				  user_similarity_cosine_pure[user1][user2] = 1 - np.dot(user1, np.transpose(user2)) / mod
 				user_similarity_jaccard[user1][user2] = 1-scipy.spatial.distance.jaccard(data[user1],data[user2])
 				try:
 					if not math.isnan(scipy.stats.pearsonr(data[user1],data[user2])[0]):
@@ -46,16 +54,16 @@ def similarity_user(data):
 
 			#f_i_d.write(str(user1) + "," + str(user2) + "," + str(user_similarity_cosine[user1][user2]) + "," + str(user_similarity_jaccard[user1][user2]) + "," + str(user_similarity_pearson[user1][user2]) + "\n")
 	#f_i_d.close()
-	return user_similarity_cosine, user_similarity_jaccard, user_similarity_pearson
+	return user_similarity_cosine, user_similarity_cosine_pure, user_similarity_jaccard, user_similarity_pearson
 
 def crossValidation(data):
-	k_fold = KFold(n=len(data), n_folds=10)
+	k_fold = KFold( n_splits=10)
 
 	Mat = np.zeros((users,items))
 	for e in data:
 		Mat[e[0]-1][e[1]-1] = e[2]
 
-	sim_user_cosine, sim_user_jaccard, sim_user_pearson = similarity_user(Mat)
+	sim_user_cosine, sim_user_cosine_pure, sim_user_jaccard, sim_user_pearson = similarity_user(Mat)
 	#sim_user_cosine, sim_user_jaccard, sim_user_pearson = np.random.rand(users,users), np.random.rand(users,users), np.random.rand(users,users)
 
 	'''sim_user_cosine = np.zeros((users,users))
@@ -71,10 +79,11 @@ def crossValidation(data):
 	f_sim.close()'''
 
 	rmse_cosine = []
+	rmse_cosine_simple = []
 	rmse_jaccard = []
 	rmse_pearson = []
 
-	for train_indices, test_indices in k_fold:
+	for train_indices, test_indices in k_fold.split(data):
 		train = [data[i] for i in train_indices]
 		test = [data[i] for i in test_indices]
 
@@ -85,6 +94,7 @@ def crossValidation(data):
 
 		true_rate = []
 		pred_rate_cosine = []
+		pred_rate_cosine_simple = []
 		pred_rate_jaccard = []
 		pred_rate_pearson = []
 
@@ -94,22 +104,29 @@ def crossValidation(data):
 			true_rate.append(e[2])
 
 			pred_cosine = 3.0
+			pred_cosine_simple = 3.0
 			pred_jaccard = 3.0
 			pred_pearson = 3.0
 
 			#user-based
 			if np.count_nonzero(M[user-1]):
 				sim_cosine = sim_user_cosine[user-1]
+				sim_cosine_pure = sim_user_cosine_pure[user-1]
 				sim_jaccard = sim_user_jaccard[user-1]
 				sim_pearson = sim_user_pearson[user-1]
 				ind = (M[:,item-1] > 0)
 				#ind[user-1] = False
 				normal_cosine = np.sum(np.absolute(sim_cosine[ind]))
+
+				normal_cosine_simple = np.sum(np.absolute(sim_cosine_pure[ind]))
+
 				normal_jaccard = np.sum(np.absolute(sim_jaccard[ind]))
 				normal_pearson = np.sum(np.absolute(sim_pearson[ind]))
 				if normal_cosine > 0:
 					pred_cosine = np.dot(sim_cosine,M[:,item-1])/normal_cosine
 
+				if normal_cosine_simple > 0:
+					pred_cosine_simple = np.dot(sim_cosine_pure,M[:,item-1])/normal_cosine_simple
 				if normal_jaccard > 0:
 					pred_jaccard = np.dot(sim_jaccard,M[:,item-1])/normal_jaccard
 
@@ -121,6 +138,12 @@ def crossValidation(data):
 
 			if pred_cosine > 5:
 				pred_cosine = 5
+
+			if pred_cosine_simple < 0:
+				pred_cosine_simple = 0
+
+			if pred_cosine_simple > 5:
+				pred_cosine_simple = 5
 
 			if pred_jaccard < 0:
 				pred_jaccard = 0
@@ -134,29 +157,34 @@ def crossValidation(data):
 			if pred_pearson > 5:
 				pred_pearson = 5
 
-			print str(user) + "\t" + str(item) + "\t" + str(e[2]) + "\t" + str(pred_cosine) + "\t" + str(pred_jaccard) + "\t" + str(pred_pearson)
+			print str(user) + "\t" + str(item) + "\t" + str(e[2]) + "\t" + str(pred_cosine) + "\t" + str(pred_cosine_simple) + "\t" + str(pred_jaccard) + "\t" + str(pred_pearson)
 			pred_rate_cosine.append(pred_cosine)
+
+			pred_rate_cosine_simple.append(pred_cosine_simple)
+
 			pred_rate_jaccard.append(pred_jaccard)
 			pred_rate_pearson.append(pred_pearson)
 
 		rmse_cosine.append(sqrt(mean_squared_error(true_rate, pred_rate_cosine)))
+		rmse_cosine_simple.append(sqrt(mean_squared_error(true_rate, pred_rate_cosine_simple)))
 		rmse_jaccard.append(sqrt(mean_squared_error(true_rate, pred_rate_jaccard)))
 		rmse_pearson.append(sqrt(mean_squared_error(true_rate, pred_rate_pearson)))
 
-		print str(sqrt(mean_squared_error(true_rate, pred_rate_cosine))) + "\t" + str(sqrt(mean_squared_error(true_rate, pred_rate_jaccard))) + "\t" + str(sqrt(mean_squared_error(true_rate, pred_rate_pearson)))
+		print str(sqrt(mean_squared_error(true_rate, pred_rate_cosine))) + "\t" + str(sqrt(mean_squared_error(true_rate, pred_rate_cosine_simple))) + "\t" + str(sqrt(mean_squared_error(true_rate, pred_rate_jaccard))) + "\t" + str(sqrt(mean_squared_error(true_rate, pred_rate_pearson)))
 		#raw_input()
 
 	#print sum(rms) / float(len(rms))
 	rmse_cosine = sum(rmse_cosine) / float(len(rmse_cosine))
+	rmse_cosine_simple = sum(rmse_cosine_simple) / float(len(rmse_cosine_simple))
 	rmse_pearson = sum(rmse_pearson) / float(len(rmse_pearson))
 	rmse_jaccard = sum(rmse_jaccard) / float(len(rmse_jaccard))
 
-	print str(rmse_cosine) + "\t" + str(rmse_jaccard) + "\t" + str(rmse_pearson)
+	print str(rmse_cosine) + "\t" + str(rmse_cosine_simple) + "\t" + str(rmse_jaccard) + "\t" + str(rmse_pearson)
 
 	f_rmse = open("rmse_user.txt","w")
-	f_rmse.write(str(rmse_cosine) + "\t" + str(rmse_jaccard) + "\t" + str(rmse_pearson) + "\n")
+	f_rmse.write(str(rmse_cosine) + "\t" + str(rmse_cosine_simple) + "\t" + str(rmse_jaccard) + "\t" + str(rmse_pearson) + "\n")
 
-	rmse = [rmse_cosine, rmse_jaccard, rmse_pearson]
+	rmse = [rmse_cosine, rmse_cosine_simple, rmse_jaccard, rmse_pearson]
 	req_sim = rmse.index(min(rmse))
 
 	print req_sim
@@ -165,6 +193,9 @@ def crossValidation(data):
 
 	if req_sim == 0:
 		sim_mat_user = sim_user_cosine
+
+	if req_sim == 1:
+		sim_mat_user = sim_user_cosine_pure
 
 	if req_sim == 1:
 		sim_mat_user = sim_user_jaccard
